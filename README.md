@@ -54,11 +54,16 @@ is enforced by the SMC firmware itself, not by fand). Logs go to
 ## Usage
 
 ```bash
-fandctl status                    # fans, temperatures, daemon state
+fandctl status                    # fans, temperatures, curves, daemon state
 fandctl set 2500                  # pin every fan to 2500 RPM
 fandctl set 1500 0                # pin only fan 0 to 1500 RPM
 fandctl set auto                  # all fans back to automatic
 fandctl auto                      # same
+fandctl curve 50:1500 60:2500 70:4000   # automatic temp→RPM curve (hottest sensor)
+fandctl curve 40:1200 65:3000 --sensor avg      # curve on average temperature
+fandctl curve 50:1500 70:3500 --sensor Tp05P 1  # one sensor, fan 1 only
+fandctl curve off [fan]           # remove curve(s), back to automatic
+fandctl curve                     # show active curves
 fandctl daemon                    # run the daemon in the foreground (sudo)
 sudo fandctl uninstall            # stop the service and remove it
 ```
@@ -66,6 +71,23 @@ sudo fandctl uninstall            # stop the service and remove it
 `fandctl status` works even when the daemon is not running: reads need no
 privileges, so the CLI opens its own SMC connection and shows a read-only
 snapshot.
+
+## Curves
+
+A curve drives fans automatically from temperature: you give 2+ `temp:rpm`
+breakpoints, fand linearly interpolates between them (below the first point
+the first RPM applies, above the last the last RPM applies) and continuously
+updates the fan target from live temperatures. The temperature source is
+`hottest` (default), `avg`, or a specific SMC sensor key from `fandctl status`.
+
+- Targets are clamped to each fan's limit (firmware `F0Mx` / model ceiling)
+  exactly like manual pins.
+- Curves are **persisted** at `/var/db/fand/curve.json` and re-applied
+  automatically when the daemon restarts (pins remain memory-only by design).
+- Setting a pin or `auto` on a curve fan clears its curve; `fandctl curve off`
+  returns fans to automatic control.
+- The target is re-written only when it moves by ≥ 20 RPM, and sleep/wake
+  re-engages the curve like any manual control.
 
 ## How it works
 
@@ -164,7 +186,6 @@ the SMC on real Apple Silicon hardware (M1 Pro, macOS 15.7).
 
 ## Roadmap
 
-- Temperature-curve mode (`fand set-curve`, persisted config in `/var/db/fand/`)
 - Intel hardware verification
 - `fandctl status --watch`
 

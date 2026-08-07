@@ -18,6 +18,8 @@ struct FandCtl {
             SetCommand.run(rest)
         case "auto":
             AutoCommand.run()
+        case "curve":
+            CurveCommand.run(rest)
         case "install":
             InstallCommand.run(rest)
         case "uninstall":
@@ -42,14 +44,21 @@ struct FandCtl {
         fandctl \(FandDaemon.version) — control the fand daemon (macOS fan control)
 
         usage:
-          fandctl status                    show fans, temperatures, daemon state
+          fandctl status                    show fans, temperatures, curves, daemon state
           fandctl set <rpm|auto> [fan]      pin fan speed(s) to <rpm> RPM, or back to automatic
           fandctl auto                      all fans back to automatic control
+          fandctl curve [pts] [opts] [fan]  set a temperature→RPM curve (or show when empty)
+          fandctl curve off [fan]           remove the curve, back to automatic
           fandctl daemon                    run the fand daemon in the foreground (root)
           fandctl install [--binary <p>]    install the launchd service (root)
           fandctl uninstall                 remove the launchd service (root)
           fandctl help                      show this help
           fandctl version                   show version
+
+        curve points are temp:rpm pairs, linearly interpolated:
+          fandctl curve 50:1500 60:2500 70:4000            hottest sensor, all fans
+          fandctl curve 40:1200 65:3000 --sensor avg       average temperature
+          fandctl curve 50:1500 70:3500 --sensor Tp05P 1   one sensor, fan 1 only
 
         examples:
           fandctl set 2500                  pin every fan to 2500 RPM
@@ -76,6 +85,12 @@ enum StatusCommand {
             print("fand daemon: running")
             renderFans(fans)
             renderTemps(temps)
+            if let curves = resp.curves, !curves.isEmpty {
+                print("curves:")
+                for c in curves {
+                    print("  [\(c.fan)] \(pad(c.sensor, to: 10)) \(c.points.map { "\(Int($0.temp)):\(Int($0.rpm))" }.joined(separator: " "))")
+                }
+            }
         } catch FandError.daemonNotRunning {
             print("fand daemon: not running (showing direct SMC snapshot — read-only)")
             directStatus()
@@ -152,6 +167,26 @@ enum StatusCommand {
     }
 }
 
+// MARK: - shared request helper
+
+/// Sends a request to the daemon, handling the not-running case uniformly.
+func sendRequest(_ req: Request) -> Response? {
+    do {
+        let resp = try IPCClient.request(req, timeout: IPCServer.setTimeout)
+        guard resp.ok else {
+            FandCtl.stderr("error: \(resp.error ?? "unknown error")")
+            exit(1)
+        }
+        return resp
+    } catch FandError.daemonNotRunning {
+        FandCtl.stderr("error: fand daemon is not running — start it with: sudo fandctl daemon   (or install: sudo ./install.sh)")
+        exit(1)
+    } catch {
+        FandCtl.stderr("error: \(error)")
+        exit(1)
+    }
+}
+
 // MARK: - set
 
 enum SetCommand {
@@ -184,22 +219,11 @@ enum SetCommand {
             req = Request(v: 1, cmd: "set", fan: fan, rpm: rpm)
         }
 
-        do {
-            let resp = try IPCClient.request(req, timeout: IPCServer.setTimeout)
-            guard resp.ok else {
-                FandCtl.stderr("error: \(resp.error ?? "unknown error")")
-                exit(1)
-            }
+        if let resp = sendRequest(req) {
             print(resp.message ?? "ok")
             if let fans = resp.fans {
                 StatusCommand.renderFans(fans)
             }
-        } catch FandError.daemonNotRunning {
-            FandCtl.stderr("error: fand daemon is not running — start it with: sudo fandctl daemon   (or install: sudo ./install.sh)")
-            exit(1)
-        } catch {
-            FandCtl.stderr("error: \(error)")
-            exit(1)
         }
     }
 }
@@ -208,15 +232,103 @@ enum SetCommand {
 
 enum AutoCommand {
     static func run() {
+        if let resp = sendRequest(Request(v: 1, cmd: "all_auto")) {
+            print(resp.message ?? "ok")
+            if let fans = resp.fans {
+                StatusCommand.renderFans(fans)
+            }
+        }
+    }
+}
+
+// MARK: - curve
+
+enum CurveCommand {
+    /// `fandctl curve` → show active curves; `fandctl curve off [fan]` → clear;
+    /// otherwise `temp:rpm` points with optional `--sensor <hottest|avg|key>`
+    /// and an optional trailing fan index.
+    static func run(_ args: [String]) {
+        if args.isEmpty {
+            show()
+            return
+        }
+        if args[0] == "off" {
+            var fan: Int?
+            if args.count >= 2 {
+                guard let i = Int(args[1]) else {
+                    FandCtl.stderr("error: invalid fan index '\(args[1])'")
+                    exit(1)
+                }
+                fan = i
+            }
+            if let resp = sendRequest(Request(v: 1, cmd: "curve_off", fan: fan)) {
+                print(resp.message ?? "ok")
+            }
+            return
+        }
+
+        var sensor = "hottest"
+        var positional: [String] = []
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "--sensor" {
+                i += 1
+                guard i < args.count else {
+                    FandCtl.stderr("error: --sensor needs a value (hottest, avg, or an SMC key)")
+                    exit(1)
+                }
+                sensor = args[i]
+            } else if a.hasPrefix("--") {
+                FandCtl.stderr("error: unknown option '\(a)'")
+                exit(1)
+            } else {
+                positional.append(a)
+            }
+            i += 1
+        }
+
+        var points: [CurvePoint] = []
+        var fan: Int?
+        for a in positional {
+            if let idx = Int(a) {
+                fan = idx
+                continue
+            }
+            let parts = a.split(separator: ":")
+            guard parts.count == 2, let t = Float(parts[0]), let r = Float(parts[1]), r >= 0 else {
+                FandCtl.stderr("error: invalid curve point '\(a)' (expected temp:rpm, e.g. 60:2500)")
+                exit(1)
+            }
+            points.append(CurvePoint(temp: t, rpm: r))
+        }
+        guard points.count >= 2 else {
+            FandCtl.stderr("error: a curve needs at least 2 points (temp:rpm)")
+            exit(1)
+        }
+
+        if let resp = sendRequest(Request(v: 1, cmd: "curve", fan: fan, points: points, sensor: sensor)) {
+            print(resp.message ?? "ok")
+            if let fans = resp.fans {
+                StatusCommand.renderFans(fans)
+            }
+        }
+    }
+
+    static func show() {
         do {
-            let resp = try IPCClient.request(Request(v: 1, cmd: "all_auto"), timeout: IPCServer.setTimeout)
+            let resp = try IPCClient.request(Request(v: 1, cmd: "status"), timeout: IPCServer.statusTimeout)
             guard resp.ok else {
                 FandCtl.stderr("error: \(resp.error ?? "unknown error")")
                 exit(1)
             }
-            print(resp.message ?? "ok")
-            if let fans = resp.fans {
-                StatusCommand.renderFans(fans)
+            if let curves = resp.curves, !curves.isEmpty {
+                print("active curves:")
+                for c in curves {
+                    print("  fan \(c.fan): \(StatusCommand.pad(c.sensor, to: 10)) \(c.points.map { "\(Int($0.temp)):\(Int($0.rpm))" }.joined(separator: " "))")
+                }
+            } else {
+                print("no curve active — set one with: fandctl curve 50:1500 60:2500 70:4000")
             }
         } catch FandError.daemonNotRunning {
             FandCtl.stderr("error: fand daemon is not running — start it with: sudo fandctl daemon   (or install: sudo ./install.sh)")

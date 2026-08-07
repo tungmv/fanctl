@@ -1,11 +1,13 @@
 import Foundation
 
-/// Per-fan desired state. Memory-only by design: a daemon restart returns
-/// every fan to automatic control.
+/// Per-fan desired state. Pins are memory-only by design: a daemon restart
+/// returns every fan to automatic control. Curves (`.curve`) are persisted
+/// and restored on startup.
 public enum Desired: Equatable {
     case untouched
     case auto
     case manual(Float)
+    case curve(FanCurve)
 }
 
 /// A point-in-time view of the daemon's world, served to IPC clients.
@@ -13,11 +15,13 @@ public struct DaemonSnapshot {
     public let fans: [FanStatus]
     public let temps: TempsStatus
     public let ftstHeld: Bool
+    public let curves: [CurveStatus]
 
-    public init(fans: [FanStatus], temps: TempsStatus, ftstHeld: Bool) {
+    public init(fans: [FanStatus], temps: TempsStatus, ftstHeld: Bool, curves: [CurveStatus]) {
         self.fans = fans
         self.temps = temps
         self.ftstHeld = ftstHeld
+        self.curves = curves
     }
 }
 
@@ -74,6 +78,8 @@ public struct DaemonCommand {
         case setTarget(fan: Int?, rpm: Float)
         case setAuto(fan: Int?)
         case allAuto
+        case setCurve(fan: Int?, points: [CurvePoint], sensor: String)
+        case curveOff(fan: Int?)
         case quit(restore: Bool)
     }
 
@@ -103,6 +109,9 @@ public final class FanController: @unchecked Sendable {
     public static let ftstSettle: TimeInterval = 3.0
     public static let tgRetries = 10
     public static let writeRetryDelay: TimeInterval = 0.05
+    /// Re-write the curve target only when it moved by at least this many RPM
+    /// (avoids hammering the SMC every 2 s cycle).
+    public static let curveWriteThreshold: Float = 20
 
     private let lock = NSLock()
     private var pending: [DaemonCommand] = []
@@ -115,7 +124,8 @@ public final class FanController: @unchecked Sendable {
     private var snapshot = DaemonSnapshot(
         fans: [],
         temps: TempsStatus(avg: 0, hottestKey: nil, hottestValue: nil, sensors: []),
-        ftstHeld: false
+        ftstHeld: false,
+        curves: []
     )
 
     private let logHandler: (String) -> Void
@@ -194,6 +204,9 @@ public final class FanController: @unchecked Sendable {
         var ftstHeld = false
         var restoring = false
         var lastReassertError: [Int: String] = [:]
+        var lastCurveTarget: [Int: Float] = [:]
+        var lastCurveLog: [Int: String] = [:]
+        let curveStore = CurveStore()
 
         // ------- helpers (control thread only) -------
 
@@ -385,6 +398,19 @@ public final class FanController: @unchecked Sendable {
                     if mode != .auto {
                         fanToAuto(fans[i])
                     }
+                case .curve:
+                    if mode != .manual {
+                        logHandler("system reclaimed \(fans[i].name) — re-engaging manual control…")
+                        if case .failure(let e) = engageManual(i) {
+                            let msg = "\(e)"
+                            if lastReassertError[i] != msg {
+                                logHandler("re-engage \(fans[i].name) failed: \(msg)")
+                                lastReassertError[i] = msg
+                            }
+                        } else {
+                            lastReassertError[i] = nil
+                        }
+                    }
                 }
             }
             maybeReleaseFtst()
@@ -407,6 +433,8 @@ public final class FanController: @unchecked Sendable {
                 }
                 applied.append((i, clamped))
                 desired[i] = .manual(clamped)
+                lastCurveTarget[i] = nil
+                lastCurveLog[i] = nil
             }
             for (i, _) in applied {
                 if case .failure(let e) = engageManual(i) {
@@ -419,6 +447,7 @@ public final class FanController: @unchecked Sendable {
                 }
             }
             maybeReleaseFtst()
+            persistCurves()
             let summary = applied.map { "fan \($0.index): \(Int($0.rpm)) RPM" }.joined(separator: ", ")
             let note = notes.isEmpty ? "" : " (" + notes.joined(separator: "; ") + ")"
             return .success("set manual: \(summary)\(note)")
@@ -434,11 +463,14 @@ public final class FanController: @unchecked Sendable {
             }
             for i in indices {
                 desired[i] = .auto
+                lastCurveTarget[i] = nil
+                lastCurveLog[i] = nil
                 if FanDiscovery.readMode(smc, fan: fans[i]) != .auto {
                     fanToAuto(fans[i])
                 }
             }
             maybeReleaseFtst()
+            persistCurves()
             let summary = indices.map { "fan \($0)" }.joined(separator: ", ")
             return .success("automatic: fan \(summary)")
         }
@@ -447,7 +479,124 @@ public final class FanController: @unchecked Sendable {
             applySetAuto(fan: nil)
         }
 
-        func publishSnapshot() {
+        // ------- curve handling -------
+
+        /// The current clamped curve target for a fan, or nil when the
+        /// selected sensor has no reading right now.
+        func curveTarget(for i: Int, curve: FanCurve, temps: TempsSnapshot) -> Float? {
+            guard let t = curve.sensorValue(in: temps) else { return nil }
+            return FanDiscovery.clampedTarget(curve.target(forTemp: t), min: fans[i].min, max: fans[i].max)
+        }
+
+        /// Persists the active curves (fan index → curve) to disk.
+        func persistCurves() {
+            var active: [Int: FanCurve] = [:]
+            for i in fans.indices {
+                if case .curve(let c) = desired[i] {
+                    active[i] = c
+                }
+            }
+            if !curveStore.save(active) {
+                logHandler("warning: could not persist curve to \(curveStore.path) (daemon needs root for that)")
+            }
+        }
+
+        /// Drives curve-controlled fans from the latest temperatures: engages
+        /// manual mode when the system reclaimed a fan, and re-writes the
+        /// target when it moved by at least `curveWriteThreshold` RPM.
+        func updateCurves(_ temps: TempsSnapshot) {
+            for i in fans.indices {
+                guard case .curve(let curve) = desired[i] else { continue }
+                guard let target = curveTarget(for: i, curve: curve, temps: temps) else {
+                    // Sensor temporarily unavailable — keep the last target.
+                    continue
+                }
+                if FanDiscovery.readMode(smc, fan: fans[i]) != .manual {
+                    if case .failure(let e) = engageManual(i) {
+                        let msg = "\(e)"
+                        if lastCurveLog[i] != msg {
+                            logHandler("curve \(fans[i].name): \(msg)")
+                            lastCurveLog[i] = msg
+                        }
+                        continue
+                    }
+                }
+                let last = lastCurveTarget[i]
+                if last == nil || abs(target - last!) >= Self.curveWriteThreshold {
+                    if case .failure(let e) = writeTargetWithRetry(i, rpm: target) {
+                        let msg = "target write failed: \(e)"
+                        if lastCurveLog[i] != msg {
+                            logHandler("curve \(fans[i].name): \(msg)")
+                            lastCurveLog[i] = msg
+                        }
+                        continue
+                    }
+                    lastCurveTarget[i] = target
+                    lastCurveLog[i] = nil
+                }
+            }
+        }
+
+        func applySetCurve(fan: Int?, points: [CurvePoint], sensor: String) -> Result<String, FandError> {
+            let curve: FanCurve
+            do {
+                curve = try FanCurve(points: points, sensor: sensor)
+            } catch {
+                return .failure(.invalidInput("\(error)"))
+            }
+            let indices: [Int]
+            switch ControlLogic.resolveIndices(fan: fan, count: fans.count) {
+            case .success(let v):
+                indices = v
+            case .failure(let e):
+                return .failure(e)
+            }
+            for i in indices {
+                desired[i] = .curve(curve)
+                if case .failure(let e) = engageManual(i) {
+                    return .failure(.message("\(fans[i].name): \(e)"))
+                }
+            }
+            let temps = Temps.refresh(smc, keys: tempKeys)
+            for i in indices {
+                if let target = curveTarget(for: i, curve: curve, temps: temps) {
+                    if case .failure(let e) = writeTargetWithRetry(i, rpm: target) {
+                        return .failure(.message("\(fans[i].name): target write failed: \(e)"))
+                    }
+                    lastCurveTarget[i] = target
+                }
+            }
+            maybeReleaseFtst()
+            persistCurves()
+            let which = indices.map { "fan \($0)" }.joined(separator: ", ")
+            return .success("curve set (\(curve.sensor)): \(which) → \(curve.summary)")
+        }
+
+        func applyCurveOff(fan: Int?) -> Result<String, FandError> {
+            let indices: [Int]
+            switch ControlLogic.resolveIndices(fan: fan, count: fans.count) {
+            case .success(let v):
+                indices = v
+            case .failure(let e):
+                return .failure(e)
+            }
+            for i in indices {
+                if case .curve = desired[i] {
+                    lastCurveTarget[i] = nil
+                    lastCurveLog[i] = nil
+                    desired[i] = .auto
+                    if FanDiscovery.readMode(smc, fan: fans[i]) != .auto {
+                        fanToAuto(fans[i])
+                    }
+                }
+            }
+            maybeReleaseFtst()
+            persistCurves()
+            let which = indices.map { "fan \($0)" }.joined(separator: ", ")
+            return .success("curve removed: \(which) back to automatic")
+        }
+
+        func publishSnapshot() -> TempsSnapshot {
             for i in fans.indices {
                 FanDiscovery.refresh(smc, &fans[i])
             }
@@ -470,10 +619,23 @@ public final class FanController: @unchecked Sendable {
                 hottestValue: temps.hottest?.temp,
                 sensors: temps.sensors.map { TempsStatus.SensorReading(key: $0.key, temp: $0.temp) }
             )
-            let snap = DaemonSnapshot(fans: statuses, temps: ts, ftstHeld: ftstHeld)
+            let curves = fans.indices.compactMap { i -> CurveStatus? in
+                guard case .curve(let c) = desired[i] else { return nil }
+                return CurveStatus(fan: i, sensor: c.sensor, points: c.points)
+            }
+            let snap = DaemonSnapshot(fans: statuses, temps: ts, ftstHeld: ftstHeld, curves: curves)
             snapshotLock.lock()
             snapshot = snap
             snapshotLock.unlock()
+            return temps
+        }
+
+        // ------- startup: restore persisted curves -------
+
+        let persisted = curveStore.load()
+        for (idx, curve) in persisted where fans.indices.contains(idx) {
+            desired[idx] = .curve(curve)
+            logHandler("restored \(fans[idx].name) curve (\(curve.sensor)): \(curve.summary)")
         }
 
         // ------- main loop -------
@@ -487,7 +649,8 @@ public final class FanController: @unchecked Sendable {
                 if !restoring {
                     reassert()
                 }
-                publishSnapshot()
+                let temps = publishSnapshot()
+                updateCurves(temps)
                 continue
             }
 
@@ -506,6 +669,10 @@ public final class FanController: @unchecked Sendable {
                 result = applySetAuto(fan: fan)
             case .allAuto:
                 result = applyAllAuto()
+            case .setCurve(let fan, let points, let sensor):
+                result = applySetCurve(fan: fan, points: points, sensor: sensor)
+            case .curveOff(let fan):
+                result = applyCurveOff(fan: fan)
             case .quit(let restore):
                 if restore {
                     restoreAll()
@@ -518,7 +685,8 @@ public final class FanController: @unchecked Sendable {
                 break loop
             }
             cmd.outcome?.finish(result)
-            publishSnapshot()
+            let temps = publishSnapshot()
+            updateCurves(temps)
         }
 
         // Drain any commands that arrived while we were quitting.

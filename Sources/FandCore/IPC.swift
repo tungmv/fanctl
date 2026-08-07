@@ -8,12 +8,17 @@ public struct Request: Codable, Equatable {
     public var cmd: String
     public var fan: Int?
     public var rpm: Double?
+    public var points: [CurvePoint]?
+    public var sensor: String?
 
-    public init(v: Int, cmd: String, fan: Int? = nil, rpm: Double? = nil) {
+    public init(v: Int, cmd: String, fan: Int? = nil, rpm: Double? = nil,
+                points: [CurvePoint]? = nil, sensor: String? = nil) {
         self.v = v
         self.cmd = cmd
         self.fan = fan
         self.rpm = rpm
+        self.points = points
+        self.sensor = sensor
     }
 }
 
@@ -64,20 +69,35 @@ public struct TempsStatus: Codable, Equatable {
     }
 }
 
+/// An active curve as reported in status responses.
+public struct CurveStatus: Codable, Equatable {
+    public let fan: Int
+    public let sensor: String
+    public let points: [CurvePoint]
+
+    public init(fan: Int, sensor: String, points: [CurvePoint]) {
+        self.fan = fan
+        self.sensor = sensor
+        self.points = points
+    }
+}
+
 public struct Response: Codable, Equatable {
     public var v: Int
     public var ok: Bool
     public var fans: [FanStatus]?
     public var temps: TempsStatus?
+    public var curves: [CurveStatus]?
     public var message: String?
     public var error: String?
 
     public init(v: Int = 1, ok: Bool, fans: [FanStatus]? = nil, temps: TempsStatus? = nil,
-                message: String? = nil, error: String? = nil) {
+                curves: [CurveStatus]? = nil, message: String? = nil, error: String? = nil) {
         self.v = v
         self.ok = ok
         self.fans = fans
         self.temps = temps
+        self.curves = curves
         self.message = message
         self.error = error
     }
@@ -297,6 +317,16 @@ public final class IPCServer: @unchecked Sendable {
         case "all_auto":
             controller.enqueue(DaemonCommand(.allAuto, outcome: outcome))
             timeout = setTimeout
+        case "curve":
+            guard let points = req.points else {
+                return Response(ok: false, error: "curve requires points (temp:rpm pairs)")
+            }
+            let sensor = (req.sensor ?? "").isEmpty ? "hottest" : req.sensor!
+            controller.enqueue(DaemonCommand(.setCurve(fan: req.fan, points: points, sensor: sensor), outcome: outcome))
+            timeout = setTimeout
+        case "curve_off":
+            controller.enqueue(DaemonCommand(.curveOff(fan: req.fan), outcome: outcome))
+            timeout = setTimeout
         case "quit":
             controller.enqueue(DaemonCommand(.quit(restore: true), outcome: outcome))
             timeout = quitTimeout
@@ -310,9 +340,11 @@ public final class IPCServer: @unchecked Sendable {
         let snapshot = controller.currentSnapshot()
         switch result {
         case .success(let message):
-            return Response(ok: true, fans: snapshot.fans, temps: snapshot.temps, message: message)
+            return Response(ok: true, fans: snapshot.fans, temps: snapshot.temps,
+                            curves: snapshot.curves, message: message)
         case .failure(let e):
-            return Response(ok: false, fans: snapshot.fans, temps: snapshot.temps, error: e.description)
+            return Response(ok: false, fans: snapshot.fans, temps: snapshot.temps,
+                            curves: snapshot.curves, error: e.description)
         }
     }
 

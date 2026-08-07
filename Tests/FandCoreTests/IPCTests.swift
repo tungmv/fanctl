@@ -12,6 +12,10 @@ import Foundation
             Request(v: 1, cmd: "set_auto", fan: 0),
             Request(v: 1, cmd: "set_auto"),
             Request(v: 1, cmd: "all_auto"),
+            Request(v: 1, cmd: "curve", points: [CurvePoint(temp: 50, rpm: 1500), CurvePoint(temp: 70, rpm: 3500)], sensor: "hottest"),
+            Request(v: 1, cmd: "curve", fan: 1, points: [CurvePoint(temp: 40, rpm: 1200), CurvePoint(temp: 60, rpm: 3000)], sensor: "Tp05P"),
+            Request(v: 1, cmd: "curve_off"),
+            Request(v: 1, cmd: "curve_off", fan: 0),
             Request(v: 1, cmd: "quit"),
         ]
         for req in requests {
@@ -36,11 +40,16 @@ import Foundation
                 hottestValue: 59.2,
                 sensors: [TempsStatus.SensorReading(key: "Tp05P", temp: 59.2)]
             ),
+            curves: [
+                CurveStatus(fan: 0, sensor: "hottest", points: [CurvePoint(temp: 50, rpm: 1500), CurvePoint(temp: 70, rpm: 3500)]),
+            ],
             message: "set manual: fan 0: 2000 RPM"
         )
         let data = try JSONEncoder().encode(resp)
         let decoded = try JSONDecoder().decode(Response.self, from: data)
         #expect(decoded == resp)
+        #expect(decoded.curves?.count == 1)
+        #expect(decoded.curves?.first?.points.count == 2)
     }
 
     @Test func errorResponseOmitsNilFields() throws {

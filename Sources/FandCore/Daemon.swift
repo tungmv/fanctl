@@ -5,7 +5,7 @@ import Darwin
 /// thread, then waits for a graceful quit (which restores all fans to
 /// automatic control before exiting).
 public enum FandDaemon {
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
 
     nonisolated(unsafe) private static var server: IPCServer?
     nonisolated(unsafe) private static var signalSources: [DispatchSourceSignal] = []
