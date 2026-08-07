@@ -279,14 +279,19 @@ enum InstallCommand {
         }
 
         let fm = FileManager.default
-        do {
-            if fm.fileExists(atPath: binaryDestination) {
-                try fm.removeItem(atPath: binaryDestination)
+        // The resolved source may already be the destination (e.g. install.sh
+        // installed the binary moments ago) — deleting it before copying would
+        // delete the very file we need to copy.
+        if binary != binaryDestination {
+            do {
+                if fm.fileExists(atPath: binaryDestination) {
+                    try fm.removeItem(atPath: binaryDestination)
+                }
+                try fm.copyItem(atPath: binary, toPath: binaryDestination)
+            } catch {
+                FandCtl.stderr("error: could not install binary: \(error)")
+                exit(1)
             }
-            try fm.copyItem(atPath: binary, toPath: binaryDestination)
-        } catch {
-            FandCtl.stderr("error: could not install binary: \(error)")
-            exit(1)
         }
 
         do {
