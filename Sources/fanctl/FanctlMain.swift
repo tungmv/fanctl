@@ -3,7 +3,7 @@ import FandCore
 import Darwin
 
 @main
-struct FandCtl {
+struct FanCtl {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
         guard let cmd = args.first else {
@@ -30,10 +30,10 @@ struct FandCtl {
             usage()
             exit(0)
         case "version", "--version", "-v":
-            print("fandctl \(FandDaemon.version)")
+            print("fanctl \(FandDaemon.version)")
             exit(0)
         default:
-            stderr("fandctl: unknown command '\(cmd)'")
+            stderr("fanctl: unknown command '\(cmd)'")
             usage()
             exit(1)
         }
@@ -41,30 +41,30 @@ struct FandCtl {
 
     static func usage() {
         print("""
-        fandctl \(FandDaemon.version) — control the fand daemon (macOS fan control)
+        fanctl \(FandDaemon.version) — control the fand daemon (macOS fan control)
 
         usage:
-          fandctl status                    show fans, temperatures, curves, daemon state
-          fandctl set <rpm|auto> [fan]      pin fan speed(s) to <rpm> RPM, or back to automatic
-          fandctl auto                      all fans back to automatic control
-          fandctl curve [pts] [opts] [fan]  set a temperature→RPM curve (or show when empty)
-          fandctl curve off [fan]           remove the curve, back to automatic
-          fandctl daemon                    run the fand daemon in the foreground (root)
-          fandctl install [--binary <p>]    install the launchd service (root)
-          fandctl uninstall                 remove the launchd service (root)
-          fandctl help                      show this help
-          fandctl version                   show version
+          fanctl status                    show fans, temperatures, curves, daemon state
+          fanctl set <rpm|auto> [fan]      pin fan speed(s) to <rpm> RPM, or back to automatic
+          fanctl auto                      all fans back to automatic control
+          fanctl curve [pts] [opts] [fan]  set a temperature→RPM curve (or show when empty)
+          fanctl curve off [fan]           remove the curve, back to automatic
+          fanctl daemon                    run the fand daemon in the foreground (root)
+          fanctl install [--binary <p>]    install the launchd service (root)
+          fanctl uninstall                 remove the launchd service (root)
+          fanctl help                      show this help
+          fanctl version                   show version
 
         curve points are temp:rpm pairs, linearly interpolated:
-          fandctl curve default [fan]               the fand default curve (Balanced preset)
-          fandctl curve 50:1500 60:2500 70:4000     hottest sensor, all fans
-          fandctl curve 40:1200 65:3000 --sensor avg       average temperature
-          fandctl curve 50:1500 70:3500 --sensor Tp05P 1   one sensor, fan 1 only
+          fanctl curve default [fan]               the fand default curve (Balanced preset)
+          fanctl curve 50:1500 60:2500 70:4000     hottest sensor, all fans
+          fanctl curve 40:1200 65:3000 --sensor avg       average temperature
+          fanctl curve 50:1500 70:3500 --sensor Tp05P 1   one sensor, fan 1 only
 
         examples:
-          fandctl set 2500                  pin every fan to 2500 RPM
-          fandctl set 1500 0                pin only fan 0 to 1500 RPM
-          fandctl set auto                  all fans back to automatic
+          fanctl set 2500                  pin every fan to 2500 RPM
+          fanctl set 1500 0                pin only fan 0 to 1500 RPM
+          fanctl set auto                  all fans back to automatic
         """)
     }
 
@@ -175,15 +175,15 @@ func sendRequest(_ req: Request) -> Response? {
     do {
         let resp = try IPCClient.request(req, timeout: IPCServer.setTimeout)
         guard resp.ok else {
-            FandCtl.stderr("error: \(resp.error ?? "unknown error")")
+            FanCtl.stderr("error: \(resp.error ?? "unknown error")")
             exit(1)
         }
         return resp
     } catch FandError.daemonNotRunning {
-        FandCtl.stderr("error: fand daemon is not running — start it with: sudo fandctl daemon   (or install: sudo ./install.sh)")
+        FanCtl.stderr("error: fand daemon is not running — start it with: sudo fanctl daemon   (or install: sudo ./install.sh)")
         exit(1)
     } catch {
-        FandCtl.stderr("error: \(error)")
+        FanCtl.stderr("error: \(error)")
         exit(1)
     }
 }
@@ -193,13 +193,13 @@ func sendRequest(_ req: Request) -> Response? {
 enum SetCommand {
     static func run(_ args: [String]) {
         guard let target = args.first else {
-            FandCtl.stderr("usage: fandctl set <rpm|auto> [fan-index]")
+            FanCtl.stderr("usage: fanctl set <rpm|auto> [fan-index]")
             exit(1)
         }
         var fan: Int?
         if args.count >= 2 {
             guard let i = Int(args[1]) else {
-                FandCtl.stderr("error: invalid fan index '\(args[1])'")
+                FanCtl.stderr("error: invalid fan index '\(args[1])'")
                 exit(1)
             }
             fan = i
@@ -210,11 +210,11 @@ enum SetCommand {
             req = Request(v: 1, cmd: fan == nil ? "all_auto" : "set_auto", fan: fan)
         } else {
             guard let rpm = Double(target), rpm >= 0 else {
-                FandCtl.stderr("error: invalid rpm '\(target)'")
+                FanCtl.stderr("error: invalid rpm '\(target)'")
                 exit(1)
             }
             if rpm > Double(HardwareCaps.absoluteCeiling) {
-                FandCtl.stderr("error: \(Int(rpm)) RPM exceeds the absolute ceiling of \(Int(HardwareCaps.absoluteCeiling)) RPM — no MacBook fan spins that fast (per-model limits apply; see fandctl status)")
+                FanCtl.stderr("error: \(Int(rpm)) RPM exceeds the absolute ceiling of \(Int(HardwareCaps.absoluteCeiling)) RPM — no MacBook fan spins that fast (per-model limits apply; see fanctl status)")
                 exit(1)
             }
             req = Request(v: 1, cmd: "set", fan: fan, rpm: rpm)
@@ -245,7 +245,7 @@ enum AutoCommand {
 // MARK: - curve
 
 enum CurveCommand {
-    /// `fandctl curve` → show active curves; `fandctl curve off [fan]` → clear;
+    /// `fanctl curve` → show active curves; `fanctl curve off [fan]` → clear;
     /// otherwise `temp:rpm` points with optional `--sensor <hottest|avg|key>`
     /// and an optional trailing fan index.
     static func run(_ args: [String]) {
@@ -257,7 +257,7 @@ enum CurveCommand {
             var fan: Int?
             if args.count >= 2 {
                 guard let i = Int(args[1]) else {
-                    FandCtl.stderr("error: invalid fan index '\(args[1])'")
+                    FanCtl.stderr("error: invalid fan index '\(args[1])'")
                     exit(1)
                 }
                 fan = i
@@ -271,7 +271,7 @@ enum CurveCommand {
             var fan: Int?
             if args.count >= 2 {
                 guard let i = Int(args[1]) else {
-                    FandCtl.stderr("error: invalid fan index '\(args[1])'")
+                    FanCtl.stderr("error: invalid fan index '\(args[1])'")
                     exit(1)
                 }
                 fan = i
@@ -294,12 +294,12 @@ enum CurveCommand {
             if a == "--sensor" {
                 i += 1
                 guard i < args.count else {
-                    FandCtl.stderr("error: --sensor needs a value (hottest, avg, or an SMC key)")
+                    FanCtl.stderr("error: --sensor needs a value (hottest, avg, or an SMC key)")
                     exit(1)
                 }
                 sensor = args[i]
             } else if a.hasPrefix("--") {
-                FandCtl.stderr("error: unknown option '\(a)'")
+                FanCtl.stderr("error: unknown option '\(a)'")
                 exit(1)
             } else {
                 positional.append(a)
@@ -316,13 +316,13 @@ enum CurveCommand {
             }
             let parts = a.split(separator: ":")
             guard parts.count == 2, let t = Float(parts[0]), let r = Float(parts[1]), r >= 0 else {
-                FandCtl.stderr("error: invalid curve point '\(a)' (expected temp:rpm, e.g. 60:2500)")
+                FanCtl.stderr("error: invalid curve point '\(a)' (expected temp:rpm, e.g. 60:2500)")
                 exit(1)
             }
             points.append(CurvePoint(temp: t, rpm: r))
         }
         guard points.count >= 2 else {
-            FandCtl.stderr("error: a curve needs at least 2 points (temp:rpm)")
+            FanCtl.stderr("error: a curve needs at least 2 points (temp:rpm)")
             exit(1)
         }
 
@@ -338,7 +338,7 @@ enum CurveCommand {
         do {
             let resp = try IPCClient.request(Request(v: 1, cmd: "status"), timeout: IPCServer.statusTimeout)
             guard resp.ok else {
-                FandCtl.stderr("error: \(resp.error ?? "unknown error")")
+                FanCtl.stderr("error: \(resp.error ?? "unknown error")")
                 exit(1)
             }
             if let curves = resp.curves, !curves.isEmpty {
@@ -347,13 +347,13 @@ enum CurveCommand {
                     print("  fan \(c.fan): \(StatusCommand.pad(c.sensor, to: 10)) \(c.points.map { "\(Int($0.temp)):\(Int($0.rpm))" }.joined(separator: " "))")
                 }
             } else {
-                print("no curve active — set one with: fandctl curve 50:1500 60:2500 70:4000")
+                print("no curve active — set one with: fanctl curve 50:1500 60:2500 70:4000")
             }
         } catch FandError.daemonNotRunning {
-            FandCtl.stderr("error: fand daemon is not running — start it with: sudo fandctl daemon   (or install: sudo ./install.sh)")
+            FanCtl.stderr("error: fand daemon is not running — start it with: sudo fanctl daemon   (or install: sudo ./install.sh)")
             exit(1)
         } catch {
-            FandCtl.stderr("error: \(error)")
+            FanCtl.stderr("error: \(error)")
             exit(1)
         }
     }
@@ -391,7 +391,7 @@ enum InstallCommand {
 
     static func run(_ args: [String]) {
         guard getuid() == 0 else {
-            FandCtl.stderr("error: install must run as root — try: sudo fandctl install   (or: sudo ./install.sh)")
+            FanCtl.stderr("error: install must run as root — try: sudo fanctl install   (or: sudo ./install.sh)")
             exit(1)
         }
 
@@ -402,14 +402,14 @@ enum InstallCommand {
                 binaryOverride = rest[1]
                 rest.removeFirst(2)
             } else {
-                FandCtl.stderr("error: unknown install option '\(rest[0])'")
+                FanCtl.stderr("error: unknown install option '\(rest[0])'")
                 exit(1)
             }
         }
 
         let candidates = [binaryOverride, "/usr/local/bin/fand", ".build/release/fand"].compactMap { $0 }
         guard let binary = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            FandCtl.stderr("error: fand binary not found — run ./install.sh first (it builds and installs both binaries)")
+            FanCtl.stderr("error: fand binary not found — run ./install.sh first (it builds and installs both binaries)")
             exit(1)
         }
 
@@ -424,7 +424,7 @@ enum InstallCommand {
                 }
                 try fm.copyItem(atPath: binary, toPath: binaryDestination)
             } catch {
-                FandCtl.stderr("error: could not install binary: \(error)")
+                FanCtl.stderr("error: could not install binary: \(error)")
                 exit(1)
             }
         }
@@ -432,7 +432,7 @@ enum InstallCommand {
         do {
             try Data(plistTemplate.utf8).write(to: URL(fileURLWithPath: plistPath), options: .atomic)
         } catch {
-            FandCtl.stderr("error: could not write \(plistPath): \(error)")
+            FanCtl.stderr("error: could not write \(plistPath): \(error)")
             exit(1)
         }
 
@@ -440,7 +440,7 @@ enum InstallCommand {
         if r.status != 0 {
             let k = runProcess("/bin/launchctl", ["kickstart", "system/com.fand.daemon"])
             if k.status != 0 {
-                FandCtl.stderr("warning: launchctl bootstrap failed: \(r.err.trimmingCharacters(in: .whitespacesAndNewlines))")
+                FanCtl.stderr("warning: launchctl bootstrap failed: \(r.err.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
         }
 
@@ -456,7 +456,7 @@ enum InstallCommand {
 enum UninstallCommand {
     static func run() {
         guard getuid() == 0 else {
-            FandCtl.stderr("error: uninstall must run as root — try: sudo fandctl uninstall")
+            FanCtl.stderr("error: uninstall must run as root — try: sudo fanctl uninstall")
             exit(1)
         }
         // bootout stops the daemon (SIGTERM → graceful restore-to-auto).
@@ -464,7 +464,7 @@ enum UninstallCommand {
         if r.status != 0 {
             let msg = r.err.trimmingCharacters(in: .whitespacesAndNewlines)
             if !msg.isEmpty {
-                FandCtl.stderr("note: launchctl: \(msg)")
+                FanCtl.stderr("note: launchctl: \(msg)")
             }
         }
         let fm = FileManager.default
@@ -472,7 +472,7 @@ enum UninstallCommand {
             do {
                 try fm.removeItem(atPath: InstallCommand.plistPath)
             } catch {
-                FandCtl.stderr("warning: could not remove \(InstallCommand.plistPath): \(error)")
+                FanCtl.stderr("warning: could not remove \(InstallCommand.plistPath): \(error)")
             }
         }
         print("uninstalled — the daemon restored fans to automatic control before exiting")

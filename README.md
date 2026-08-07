@@ -11,7 +11,7 @@ interface.
 
 ```
 ┌────────────┐   JSON over /tmp/fand.sock   ┌──────────────────────────┐
-│ fandctl    │ ────────────────────────────► │ fand daemon (root)       │
+│ fanctl    │ ────────────────────────────► │ fand daemon (root)       │
 │ (CLI)      │ ◄──────────────────────────── │  control thread          │
 └────────────┘     status / fans / temps    │  own SMC connection      │
                                             │  unlock / retry / clamp  │
@@ -43,8 +43,8 @@ Or manually:
 ```bash
 swift build -c release
 sudo install -m 0755 .build/release/fand /usr/local/bin/fand
-sudo install -m 0755 .build/release/fandctl /usr/local/bin/fandctl
-sudo fandctl install
+sudo install -m 0755 .build/release/fanctl /usr/local/bin/fanctl
+sudo fanctl install
 ```
 
 The daemon runs as root via launchd (writing fan speeds requires root — that
@@ -54,21 +54,21 @@ is enforced by the SMC firmware itself, not by fand). Logs go to
 ## Usage
 
 ```bash
-fandctl status                    # fans, temperatures, curves, daemon state
-fandctl set 2500                  # pin every fan to 2500 RPM
-fandctl set 1500 0                # pin only fan 0 to 1500 RPM
-fandctl set auto                  # all fans back to automatic
-fandctl auto                      # same
-fandctl curve 50:1500 60:2500 70:4000   # automatic temp→RPM curve (hottest sensor)
-fandctl curve 40:1200 65:3000 --sensor avg      # curve on average temperature
-fandctl curve 50:1500 70:3500 --sensor Tp05P 1  # one sensor, fan 1 only
-fandctl curve off [fan]           # remove curve(s), back to automatic
-fandctl curve                     # show active curves
-fandctl daemon                    # run the daemon in the foreground (sudo)
-sudo fandctl uninstall            # stop the service and remove it
+fanctl status                    # fans, temperatures, curves, daemon state
+fanctl set 2500                  # pin every fan to 2500 RPM
+fanctl set 1500 0                # pin only fan 0 to 1500 RPM
+fanctl set auto                  # all fans back to automatic
+fanctl auto                      # same
+fanctl curve 50:1500 60:2500 70:4000   # automatic temp→RPM curve (hottest sensor)
+fanctl curve 40:1200 65:3000 --sensor avg      # curve on average temperature
+fanctl curve 50:1500 70:3500 --sensor Tp05P 1  # one sensor, fan 1 only
+fanctl curve off [fan]           # remove curve(s), back to automatic
+fanctl curve                     # show active curves
+fanctl daemon                    # run the daemon in the foreground (sudo)
+sudo fanctl uninstall            # stop the service and remove it
 ```
 
-`fandctl status` works even when the daemon is not running: reads need no
+`fanctl status` works even when the daemon is not running: reads need no
 privileges, so the CLI opens its own SMC connection and shows a read-only
 snapshot.
 
@@ -78,15 +78,15 @@ A curve drives fans automatically from temperature: you give 2+ `temp:rpm`
 breakpoints, fand linearly interpolates between them (below the first point
 the first RPM applies, above the last the last RPM applies) and continuously
 updates the fan target from live temperatures. The temperature source is
-`hottest` (default), `avg`, or a specific SMC sensor key from `fandctl status`.
+`hottest` (default), `avg`, or a specific SMC sensor key from `fanctl status`.
 
 - Targets are clamped to each fan's limit (firmware `F0Mx` / model ceiling)
   exactly like manual pins.
 - Curves are **persisted** at `/var/db/fand/curve.json` and re-applied
   automatically when the daemon restarts (pins remain memory-only by design).
-- Setting a pin or `auto` on a curve fan clears its curve; `fandctl curve off`
+- Setting a pin or `auto` on a curve fan clears its curve; `fanctl curve off`
   returns fans to automatic control.
-- **Default curve:** `fandctl curve default [fan]` applies fand's built-in
+- **Default curve:** `fanctl curve default [fan]` applies fand's built-in
   curve — the community-sourced "Balanced" preset of the FanCurve app
   (github.com/agoodkind/macos-fan-curve), the most widely shared Apple
   Silicon fan curve, adapted to RPM against the M1 Pro firmware max:
@@ -188,7 +188,7 @@ the SMC on real Apple Silicon hardware (M1 Pro, macOS 15.7).
   its control right now.
 - **Settings revert after sleep** — expected; firmware resets the unlock on
   wake. fand re-engages your target automatically within a couple of seconds.
-- **"permission denied"** — the daemon must run as root; `fandctl set`
+- **"permission denied"** — the daemon must run as root; `fanctl set`
   requires the daemon (not just the CLI) to be running as root.
 - **Fanless Macs (MacBook Air)** — nothing to control; the daemon logs
   "no fans found" and exits.
@@ -196,7 +196,7 @@ the SMC on real Apple Silicon hardware (M1 Pro, macOS 15.7).
 ## Roadmap
 
 - Intel hardware verification
-- `fandctl status --watch`
+- `fanctl status --watch`
 
 ## License
 

@@ -75,7 +75,7 @@ public struct FanCurve: Codable, Equatable, Sendable {
         points.map { "\(Int($0.temp)):\(Int($0.rpm))" }.joined(separator: " ")
     }
 
-    /// The fand default curve, applied by `fandctl curve default`.
+    /// The fand default curve, applied by `fanctl curve default`.
     ///
     /// Source: the community-sourced "Balanced" preset of the FanCurve app
     /// (github.com/agoodkind/macos-fan-curve, MIT), which is the most widely

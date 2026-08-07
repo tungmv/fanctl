@@ -13,7 +13,7 @@ public enum FandDaemon {
     public static func run() {
         let args = Array(CommandLine.arguments.dropFirst())
         if let first = args.first, first != "daemon" {
-            stderr("fand: unknown argument '\(first)' — fand is the daemon binary; use 'fandctl' for control commands")
+            stderr("fand: unknown argument '\(first)' — fand is the daemon binary; use 'fanctl' for control commands")
             exit(2)
         }
 
