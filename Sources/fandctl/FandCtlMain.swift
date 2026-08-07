@@ -127,7 +127,7 @@ enum StatusCommand {
             let mode = pad(f.mode, to: 7)
             let actual = pad("\(Int(f.actual))", to: 6)
             let target = pad("\(Int(f.target))", to: 6)
-            print("  [\(f.index)] \(pad(f.name, to: 12)) mode=\(mode) actual=\(actual) target=\(target) pinned=\(f.pinned ? "yes" : "no")")
+            print("  [\(f.index)] \(pad(f.name, to: 12)) mode=\(mode) actual=\(actual) target=\(target) limit=\(Int(f.max)) pinned=\(f.pinned ? "yes" : "no")")
         }
     }
 
@@ -175,6 +175,10 @@ enum SetCommand {
         } else {
             guard let rpm = Double(target), rpm >= 0 else {
                 FandCtl.stderr("error: invalid rpm '\(target)'")
+                exit(1)
+            }
+            if rpm > Double(HardwareCaps.absoluteCeiling) {
+                FandCtl.stderr("error: \(Int(rpm)) RPM exceeds the absolute ceiling of \(Int(HardwareCaps.absoluteCeiling)) RPM — no MacBook fan spins that fast (per-model limits apply; see fandctl status)")
                 exit(1)
             }
             req = Request(v: 1, cmd: "set", fan: fan, rpm: rpm)

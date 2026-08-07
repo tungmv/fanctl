@@ -28,9 +28,12 @@ public struct Fan {
     /// The mode key actually present on this machine (`F{i}Md`, or the
     /// lowercase `F{i}md` variant some M5 firmware uses).
     public let mdKey: String
+    /// Where the effective max limit came from (firmware / model ceiling /
+    /// absolute ceiling) — used in user-facing messages.
+    public let maxSource: String
 
     public init(index: Int, name: String, min: Float, max: Float, actual: Float,
-                target: Float, mode: FanMode, mdKey: String) {
+                target: Float, mode: FanMode, mdKey: String, maxSource: String = "") {
         self.index = index
         self.name = name
         self.min = min
@@ -39,6 +42,7 @@ public struct Fan {
         self.target = target
         self.mode = mode
         self.mdKey = mdKey
+        self.maxSource = maxSource
     }
 }
 
@@ -147,23 +151,28 @@ public enum FanDiscovery {
         guard count > 0, count < 64 else {
             return []
         }
+        // Effective per-fan limit: firmware F0Mx when plausible, otherwise
+        // the hardcoded per-model ceiling (HardwareCaps) — never the old
+        // generic 6000 fallback.
+        let model = HardwareCaps.modelIdentifier()
         var fans: [Fan] = []
         for i in 0..<Int(count) {
+            let firmwareMax = readRPM(smc, key: keyName(i, "Mx"))
+            let limit = HardwareCaps.effectiveLimit(firmwareMax: firmwareMax, model: model)
             var min = readRPM(smc, key: keyName(i, "Mn")) ?? 0
-            var max = readRPM(smc, key: keyName(i, "Mx")) ?? 6000
-            if !(min >= 0 && min < max) {
+            if !(min >= 0 && min < limit.value) {
                 min = 0
-                max = 6000
             }
             fans.append(Fan(
                 index: i,
                 name: fanName(smc, index: i),
                 min: min,
-                max: max,
+                max: limit.value,
                 actual: 0,
                 target: 0,
                 mode: .auto,
-                mdKey: probeModeKey(smc, index: i)
+                mdKey: probeModeKey(smc, index: i),
+                maxSource: limit.source
             ))
         }
         for i in fans.indices {

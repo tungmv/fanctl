@@ -122,8 +122,15 @@ diverge.
   hardware the fan is marked dirty, so even a failed follow-up write is
   covered by the exit-restore. A fan can never be silently stranded in
   manual mode.
-- **Targets are clamped** to the firmware-reported `F0Mn`–`F0Mx` range, and
-  `F0Mn`/`F0Mx` themselves are never written.
+- **Targets are clamped** to the per-fan limit: the firmware-reported
+  `F0Mx` when plausible, otherwise a **hardcoded per-model ceiling**
+  (`Sources/FandCore/Hardware.swift`). Apple publishes no fan-RPM API, so
+  the table is built from measured maxima (Notebookcheck stress tests, the
+  Apple Wiki) and Apple's own model-identifier list (support.apple.com/HT201300);
+  every ceiling is rounded *up* so it can never undercut the hardware.
+  Unknown models fall back to an absolute ceiling of 9000 RPM (no MacBook
+  fan has ever been measured above ~8000). `F0Mn`/`F0Mx` themselves are
+  never written, and the CLI refuses values above 9000 outright.
 - **Quit is interruptible.** A quit lands within ~50 ms even mid-unlock.
 - **External state is respected.** fand only restores fans it touched — if
   another tool set something, exit leaves it alone.

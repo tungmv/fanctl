@@ -183,6 +183,9 @@ public final class FanController: @unchecked Sendable {
             return
         }
         logHandler("connected to AppleSMC: \(fans.count) fan(s)")
+        for fan in fans {
+            logHandler("\(fan.name): speed limit \(Int(fan.max)) RPM (\(fan.maxSource))")
+        }
 
         let tempKeys = Temps.discover(smc)
         logHandler("\(tempKeys.count) temperature sensor(s)")
@@ -400,7 +403,7 @@ public final class FanController: @unchecked Sendable {
             for i in indices {
                 let clamped = FanDiscovery.clampedTarget(rpm, min: fans[i].min, max: fans[i].max)
                 if clamped != rpm {
-                    notes.append("\(fans[i].name): clamped \(Int(rpm)) → \(Int(clamped))")
+                    notes.append("\(fans[i].name): clamped \(Int(rpm)) → \(Int(clamped)) (\(fans[i].maxSource))")
                 }
                 applied.append((i, clamped))
                 desired[i] = .manual(clamped)
