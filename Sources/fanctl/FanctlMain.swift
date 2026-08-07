@@ -443,6 +443,14 @@ enum InstallCommand {
                 FanCtl.stderr("warning: launchctl bootstrap failed: \(r.err.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
         }
+        // Force-restart the daemon so a freshly installed binary actually
+        // takes effect — bootstrap/kickstart alone leave an already-running
+        // daemon on the old executable. SIGTERM triggers the graceful
+        // restore-to-auto, then the new binary starts.
+        let ks = runProcess("/bin/launchctl", ["kickstart", "-k", "system/com.fand.daemon"])
+        if ks.status != 0 {
+            FanCtl.stderr("warning: could not restart daemon: \(ks.err.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
 
         print("installed:")
         print("  daemon binary: \(binaryDestination)")

@@ -1,8 +1,10 @@
-# fand
+# fanctl
 
-A small, safe macOS fan-control **daemon + CLI** written in Swift. fand talks
-directly to the SMC (System Management Controller) through IOKit — no kernel
-extensions, no background daemons beyond one launchd service, no Electron.
+A small, safe macOS fan-control **daemon + CLI** written in Swift.
+[`fanctl`](https://github.com/tungmv/fanctl) is the CLI; `fand` is the root
+launchd daemon it drives. fand talks directly to the SMC (System Management
+Controller) through IOKit — no kernel extensions, no background daemons beyond
+one launchd service, no Electron.
 
 It is a faithful Swift port of the architecture and SMC protocol of
 [raminsharifi/MacFanControl](https://github.com/raminsharifi/MacFanControl),
