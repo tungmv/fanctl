@@ -74,6 +74,39 @@ public struct FanCurve: Codable, Equatable, Sendable {
     public var summary: String {
         points.map { "\(Int($0.temp)):\(Int($0.rpm))" }.joined(separator: " ")
     }
+
+    /// The fand default curve, applied by `fandctl curve default`.
+    ///
+    /// Source: the community-sourced "Balanced" preset of the FanCurve app
+    /// (github.com/agoodkind/macos-fan-curve, MIT), which is the most widely
+    /// shared Apple-Silicon fan curve: 0% under 50 °C, 30% @ 55 °C,
+    /// 35% @ 65 °C, 45% @ 75 °C, 60% @ 85 °C, 80% @ 95 °C, 100% @ 100 °C.
+    ///
+    /// Adapted to RPM against the M1 Pro 14" firmware max (~4300 RPM, the
+    /// most common fan-equipped MacBook Pro per sales volume; this project's
+    /// own F0Mx read: 4296). It matches the community consensus for the M1
+    /// Pro (MacRumors: fans should reach 50–70% above 85 °C instead of
+    /// Apple's 100 °C cliff; Apple-support guidance: start ramping ~54 °C,
+    /// max out ~85–90 °C+):
+    ///
+    ///   ≤50 °C → 1500 RPM (silent floor, ≈ F0Mn) · 65 °C → 1500 (35%)
+    ///   75 °C → 1950 (45%) · 85 °C → 2600 (60%) · 95 °C → 3450 (80%)
+    ///   100 °C → 4300 (100%)
+    ///
+    /// Targets are clamped per fan to its firmware/model limit, so on other
+    /// models (e.g. 16" with ~5800 RPM maxima) the same curve stays safe.
+    public static let defaultCurve: FanCurve = {
+        // Points are validated (sorted, strictly increasing, non-negative RPM)
+        // so a fixed preset cannot fail; `try!` is safe here.
+        try! FanCurve(points: [
+            CurvePoint(temp: 50, rpm: 1500),
+            CurvePoint(temp: 65, rpm: 1500),
+            CurvePoint(temp: 75, rpm: 1950),
+            CurvePoint(temp: 85, rpm: 2600),
+            CurvePoint(temp: 95, rpm: 3450),
+            CurvePoint(temp: 100, rpm: 4300),
+        ], sensor: "hottest")
+    }()
 }
 
 /// Persistence for active curves. Stored as JSON at `/var/db/fand/curve.json`

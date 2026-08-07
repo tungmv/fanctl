@@ -56,7 +56,8 @@ struct FandCtl {
           fandctl version                   show version
 
         curve points are temp:rpm pairs, linearly interpolated:
-          fandctl curve 50:1500 60:2500 70:4000            hottest sensor, all fans
+          fandctl curve default [fan]               the fand default curve (Balanced preset)
+          fandctl curve 50:1500 60:2500 70:4000     hottest sensor, all fans
           fandctl curve 40:1200 65:3000 --sensor avg       average temperature
           fandctl curve 50:1500 70:3500 --sensor Tp05P 1   one sensor, fan 1 only
 
@@ -263,6 +264,24 @@ enum CurveCommand {
             }
             if let resp = sendRequest(Request(v: 1, cmd: "curve_off", fan: fan)) {
                 print(resp.message ?? "ok")
+            }
+            return
+        }
+        if args[0] == "default" {
+            var fan: Int?
+            if args.count >= 2 {
+                guard let i = Int(args[1]) else {
+                    FandCtl.stderr("error: invalid fan index '\(args[1])'")
+                    exit(1)
+                }
+                fan = i
+            }
+            let curve = FanCurve.defaultCurve
+            if let resp = sendRequest(Request(v: 1, cmd: "curve", fan: fan, points: curve.points, sensor: curve.sensor)) {
+                print(resp.message ?? "ok")
+                if let fans = resp.fans {
+                    StatusCommand.renderFans(fans)
+                }
             }
             return
         }

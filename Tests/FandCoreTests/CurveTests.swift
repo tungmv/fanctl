@@ -158,4 +158,38 @@ import Foundation
         #expect(Desired.curve(c) == Desired.curve(c))
         #expect(Desired.curve(c) != Desired.manual(2000))
     }
+
+    // MARK: default curve
+
+    @Test func defaultCurveIsValid() {
+        let c = FanCurve.defaultCurve
+        #expect(c.points.count >= 2)
+        #expect(c.sensor == "hottest")
+        let temps = c.points.map(\.temp)
+        #expect(temps == temps.sorted())
+        #expect(zip(temps, temps.dropFirst()).allSatisfy { $0 < $1 })
+        #expect(c.points.allSatisfy { $0.rpm >= 0 })
+    }
+
+    @Test func defaultCurveFollowsBalancedPreset() {
+        let c = FanCurve.defaultCurve
+        // Silent floor below 50 °C.
+        #expect(c.target(forTemp: 40) == 1500)
+        #expect(c.target(forTemp: 50) == 1500)
+        // 45% at 75 °C ≈ 1950.
+        #expect(c.target(forTemp: 75) == 1950)
+        // 60% at 85 °C ≈ 2600 (the community's "50–70% above 85 °C" band).
+        #expect(c.target(forTemp: 85) == 2600)
+        // 80% at 95 °C ≈ 3450.
+        #expect(c.target(forTemp: 95) == 3450)
+        // Full speed at 100 °C ≈ firmware max (4296/4744 on M1 Pro 14").
+        #expect(c.target(forTemp: 100) == 4300)
+        #expect(c.target(forTemp: 110) == 4300)
+    }
+
+    @Test func defaultCurveStaysWithinAbsoluteCeiling() {
+        for p in FanCurve.defaultCurve.points {
+            #expect(p.rpm <= HardwareCaps.absoluteCeiling)
+        }
+    }
 }

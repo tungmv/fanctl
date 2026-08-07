@@ -86,6 +86,15 @@ updates the fan target from live temperatures. The temperature source is
   automatically when the daemon restarts (pins remain memory-only by design).
 - Setting a pin or `auto` on a curve fan clears its curve; `fandctl curve off`
   returns fans to automatic control.
+- **Default curve:** `fandctl curve default [fan]` applies fand's built-in
+  curve — the community-sourced "Balanced" preset of the FanCurve app
+  (github.com/agoodkind/macos-fan-curve), the most widely shared Apple
+  Silicon fan curve, adapted to RPM against the M1 Pro firmware max:
+  ≤50 °C → 1500 RPM (silent floor) · 65 °C → 1500 · 75 °C → 1950 ·
+  85 °C → 2600 · 95 °C → 3450 · 100 °C → 4300. It keeps fans at minimum
+  below 50 °C, reaches 60% by 85 °C (the MacRumors consensus for the M1
+  Pro, whose stock curve lets cores hit 100 °C before fans spin), and
+  clamps per fan to the firmware/model limit.
 - The target is re-written only when it moves by ≥ 20 RPM, and sleep/wake
   re-engages the curve like any manual control.
 
