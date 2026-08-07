@@ -159,8 +159,6 @@ enum StatusCommand {
             hottest = "n/a"
         }
         print(String(format: "temps: avg %.1f°C  hottest %@", t.avg, hottest))
-        let line = t.sensors.map { String(format: "%@ %.1f°C", $0.key, $0.temp) }.joined(separator: "  ")
-        print("  \(line)")
     }
 
     static func pad(_ s: String, to n: Int) -> String {
